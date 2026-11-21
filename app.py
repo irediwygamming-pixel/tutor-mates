@@ -10,6 +10,11 @@ import pandas as pd
 from google import genai
 from google.genai import types
 
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
 # -----------------------------------------------------------------------------
 # 1. CONFIGURACIÓN DE PÁGINA
 # -----------------------------------------------------------------------------
@@ -319,11 +324,12 @@ with st.sidebar:
 st.title("📐 Panel de Gestión Docente y Diversidad DUA")
 st.markdown("Herramienta docente privada para automatizar la gestión de aula, diseño de pruebas multinivel y seguimiento pedagógico en **3º de Educación Secundaria Obligatoria**.")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 Pasar Lista y Burocracia",
     "📅 Distribución de Horas y Temario",
     "🎯 Diseñador de Ejercicios y Exámenes DUA",
-    "🤖 Asistente Docente con Contexto del Aula"
+    "🤖 Asistente Docente con Contexto del Aula",
+    "📜 Normativa y Plan de Convivencia"
 ])
 
 
@@ -681,3 +687,237 @@ with tab4:
                 respuesta_ia = call_gemini(full_prompt, system_instruction=system_prompt_chat)
                 st.markdown(respuesta_ia)
                 st.session_state["chat_messages"].append({"role": "assistant", "content": respuesta_ia})
+
+
+# =============================================================================
+# GESTIÓN DE DOCUMENTOS NORMATIVOS (PDF) CON CACHÉ Y PYPDF
+# =============================================================================
+DOCS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "documentos_centro")
+if not os.path.exists(DOCS_FOLDER):
+    DOCS_FOLDER = "documentos_centro"
+    os.makedirs(DOCS_FOLDER, exist_ok=True)
+
+@st.cache_data
+def load_preloaded_documents(folder_path: str):
+    """
+    Lee automáticamente todos los archivos .pdf dentro de folder_path usando pypdf.
+    Guarda el número de página de cada texto extraído y un resumen de páginas leídas.
+    Usa @st.cache_data para una carga instantánea en reinicios y consultas.
+    """
+    docs_summary = []
+    pages_data = []
+
+    if not os.path.exists(folder_path) or PdfReader is None:
+        return docs_summary, pages_data
+
+    try:
+        pdf_files = [f for f in os.listdir(folder_path) if f.lower().endswith(".pdf")]
+        pdf_files.sort()
+    except Exception:
+        return docs_summary, pages_data
+
+    for filename in pdf_files:
+        file_path = os.path.join(folder_path, filename)
+        try:
+            reader = PdfReader(file_path)
+            num_pages = len(reader.pages)
+            for idx, page in enumerate(reader.pages):
+                text = (page.extract_text() or "").strip()
+                pages_data.append({
+                    "documento": filename,
+                    "pagina": idx + 1,
+                    "texto": text if text else "[Página sin texto seleccionable / imagen escaneada]"
+                })
+            docs_summary.append({
+                "nombre": filename,
+                "paginas": num_pages,
+                "error": None
+            })
+        except Exception as e:
+            docs_summary.append({
+                "nombre": filename,
+                "paginas": 0,
+                "error": str(e)
+            })
+
+    return docs_summary, pages_data
+
+def build_normativa_context(pages_data: list[dict]) -> str:
+    """Construye un bloque ordenado de texto identificando claramente cada documento y página."""
+    if not pages_data:
+        return "No se dispone de documentos normativos en este momento."
+    
+    chunks = []
+    for item in pages_data:
+        chunks.append(
+            f"--- INICIO PÁGINA ---\n"
+            f"DOCUMENTO: {item['documento']} | PÁGINA: {item['pagina']}\n"
+            f"CONTENIDO:\n{item['texto']}\n"
+            f"--- FIN PÁGINA ---"
+        )
+    return "\n\n".join(chunks)
+
+def parse_extra_pdf(uploaded_file):
+    """Extrae páginas de un PDF subido temporalmente a través de st.file_uploader."""
+    if PdfReader is None:
+        return [], 0, "Librería pypdf no disponible."
+    try:
+        reader = PdfReader(uploaded_file)
+        total = len(reader.pages)
+        pages = []
+        for idx, page in enumerate(reader.pages):
+            text = (page.extract_text() or "").strip()
+            pages.append({
+                "documento": f"[Temporal] {uploaded_file.name}",
+                "pagina": idx + 1,
+                "texto": text if text else "[Página sin texto seleccionable]"
+            })
+        return pages, total, None
+    except Exception as e:
+        return [], 0, str(e)
+
+
+# =============================================================================
+# PESTAÑA 5: 📜 NORMATIVA Y PLAN DE CONVIVENCIA
+# =============================================================================
+with tab5:
+    st.header("📜 Normativa y Plan de Convivencia")
+    st.markdown("Asistente oficial para resolver dudas sobre el Reglamento de Régimen Interior (RRI), Plan de Convivencia, protocolos y deberes docentes con citación exacta de fuentes.")
+
+    if PdfReader is None:
+        st.error("⚠️ La librería `pypdf` no está instalada en el entorno. Por favor, ejecuta `pip install pypdf` para habilitar la lectura de documentos PDF.")
+        st.stop()
+
+    # Carga automática con @st.cache_data
+    docs_summary, preloaded_pages = load_preloaded_documents(DOCS_FOLDER)
+
+    # 1. Resumen limpio en verde arriba indicando los documentos precargados
+    if docs_summary:
+        valid_docs = [d for d in docs_summary if not d["error"]]
+        error_docs = [d for d in docs_summary if d["error"]]
+        total_docs = len(valid_docs)
+        total_paginas = sum(d["paginas"] for d in valid_docs)
+
+        doc_badges = "".join([
+            f"<div style='margin: 4px 0; color: #166534; font-size: 0.95rem;'>"
+            f"📄 <strong>{d['nombre']}</strong> &nbsp; "
+            f"<span style='background-color: #bbf7d0; color: #14532d; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.85rem;'>{d['paginas']} páginas leídas</span>"
+            f"</div>"
+            for d in valid_docs
+        ])
+
+        st.markdown(f"""
+        <div style="background-color: #f0fdf4; border: 1px solid #86efac; border-left: 6px solid #22c55e; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px;">
+            <div style="color: #166534; font-weight: 700; font-size: 1.05rem; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                <span>✅</span> <span>Documentos de Normativa Precargados ({total_docs} archivo{'s' if total_docs != 1 else ''} • {total_paginas} páginas)</span>
+            </div>
+            {doc_badges}
+        </div>
+        """, unsafe_allow_html=True)
+
+        if error_docs:
+            for err in error_docs:
+                st.warning(f"⚠️ Error al leer `{err['nombre']}`: {err['error']}")
+    else:
+        st.warning(f"⚠️ No se encontraron archivos `.pdf` en la carpeta `{DOCS_FOLDER}`. Deposita los documentos de normativa en esa carpeta para precargarlos automáticamente.")
+
+    # Expander opcional para documento extra temporal
+    with st.expander("➕ Añadir documento extra temporal"):
+        st.caption("Sube un PDF adicional solo para esta sesión de consulta (no sustituye los documentos precargados del centro).")
+        extra_pdf = st.file_uploader("Subir documento PDF adicional:", type=["pdf"], key="uploader_normativa_extra")
+        extra_pages = []
+        if extra_pdf:
+            extra_pages, extra_pages_count, err_extra = parse_extra_pdf(extra_pdf)
+            if err_extra:
+                st.error(f"Error al leer el archivo temporal: {err_extra}")
+            else:
+                st.info(f"📎 Documento temporal añadido a la consulta: **{extra_pdf.name}** ({extra_pages_count} páginas).")
+
+    # Conjunto completo de páginas activas
+    all_active_pages = preloaded_pages + (extra_pages if extra_pdf else [])
+
+    # 2. Chat listo directamente debajo para preguntar al instante
+    st.markdown("### 💬 Consulta Inmediata de Normativa")
+    st.caption("Formula cualquier pregunta sobre convivencia, sanciones, guardia de aula o uso de dispositivos. La IA responderá exclusivamente con los documentos indicando página exacta.")
+
+    # Botones rápidos de consulta
+    col_nq1, col_nq2, col_nq3 = st.columns(3)
+    pregunta_rapida_norm = None
+    with col_nq1:
+        if st.button("📱 Uso de teléfonos móviles", use_container_width=True, key="btn_norm_movil"):
+            pregunta_rapida_norm = "¿Cuál es la normativa sobre el uso de teléfonos móviles y dispositivos electrónicos en el centro y las aulas?"
+    with col_nq2:
+        if st.button("🚨 Faltas graves y sanciones", use_container_width=True, key="btn_norm_graves"):
+            pregunta_rapida_norm = "¿Qué conductas se tipifican como faltas graves o muy graves y qué sanciones y medidas correctoras contempla el centro?"
+    with col_nq3:
+        if st.button("🚪 Protocolo de retrasos y guardias", use_container_width=True, key="btn_norm_guardias"):
+            pregunta_rapida_norm = "¿Cuál es el protocolo de actuación ante el retraso de un alumno y qué obligaciones tiene el profesorado de guardia?"
+
+    # Inicializar historial de chat de normativa
+    if "normativa_chat_messages" not in st.session_state:
+        st.session_state["normativa_chat_messages"] = [
+            {
+                "role": "assistant",
+                "content": "👋 Hola, colega docente. He precargado en memoria la normativa del centro con sus páginas indexadas. ¿Qué duda de régimen interno o convivencia necesitas consultar? Responderé citando siempre el documento y la página correspondiente."
+            }
+        ]
+
+    # Renderizar historial de mensajes
+    for msg in st.session_state["normativa_chat_messages"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Input de consulta
+    user_input_norm = st.chat_input("Escribe tu consulta sobre la normativa del centro...", key="chat_input_normativa")
+    prompt_norm_to_send = pregunta_rapida_norm if pregunta_rapida_norm else user_input_norm
+
+    if prompt_norm_to_send:
+        if not all_active_pages:
+            st.warning("⚠️ No hay documentos disponibles para consultar. Añade archivos PDF en la carpeta `documentos_centro/` o sube un PDF temporal.")
+        else:
+            st.session_state["normativa_chat_messages"].append({"role": "user", "content": prompt_norm_to_send})
+            with st.chat_message("user"):
+                st.markdown(prompt_norm_to_send)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Buscando en la normativa del centro y localizando páginas..."):
+                    contexto_normativa = build_normativa_context(all_active_pages)
+
+                    system_instruction_normativa = f"""
+                    Eres el Asistente Oficial Especializado en Normativa de Régimen Interior, Organización y Plan de Convivencia de este Centro Educativo.
+                    Tu labor es orientar y resolver dudas docentes con máximo rigor institucional y legal.
+
+                    DOCUMENTOS NORMATIVOS OFICIALES DISPONIBLES (ORGANIZADOS POR DOCUMENTO Y PÁGINA):
+                    {contexto_normativa}
+
+                    REGLAS ESTRICTAS DE RESPUESTA (CUMPLIMIENTO OBLIGATORIO):
+                    1. EXCLUSIVIDAD DOCUMENTAL ABSOLUTA:
+                       - Debes responder ÚNICA Y EXCLUSIVAMENTE basándote en la información que conste de manera explícita en los documentos normativos aportados arriba.
+                       - NO utilices conocimientos previos generales, leyes no citadas en los textos, suposiciones ni inventes procedimientos bajo ningún concepto.
+                    2. CITACIÓN OBLIGATORIA DE DOCUMENTO Y PÁGINA:
+                       - En CADA afirmación, regla, sanción o medida que menciones, DEBES CITAR SIEMPRE el nombre exacto del documento y el número de página donde se encuentra la norma.
+                       - Formato de cita obligatorio: `[Nombre_Documento.pdf, pág. X]` o `[Nombre_Documento.pdf, Página X]`.
+                    3. INFORMACIÓN NO DISPONIBLE:
+                       - Si la consulta del profesor NO aparece en los documentos precargados o no hay información suficiente en ellos para responder, DEBES RESPONDER TAXATIVAMENTE:
+                         "Esa información no consta en la normativa del centro."
+                       - No formules conjeturas ni ofrezcas respuestas hipotéticas si la norma no consta en los documentos facilitados.
+                    4. TONO Y FORMATO:
+                       - Tono formal, riguroso, institucional y de apoyo pedagógico.
+                       - Estructura las respuestas con claridad (puntos clave, listas con viñetas) indicando las referencias documentales exactas.
+                    """
+
+                    historial_norm = ""
+                    for m in st.session_state["normativa_chat_messages"][-6:]:
+                        historial_norm += f"{m['role'].upper()}: {m['content']}\n"
+
+                    full_prompt_norm = f"""
+                    HISTORIAL DE CONSULTAS RECIENTES:
+                    {historial_norm}
+
+                    CONSULTA DEL PROFESOR:
+                    {prompt_norm_to_send}
+                    """
+
+                    respuesta_norm = call_gemini(full_prompt_norm, system_instruction=system_instruction_normativa)
+                    st.markdown(respuesta_norm)
+                    st.session_state["normativa_chat_messages"].append({"role": "assistant", "content": respuesta_norm})
