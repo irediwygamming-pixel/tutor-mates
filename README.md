@@ -138,12 +138,16 @@ Organizada en tres sub-pestañas:
 ---
 
 ### 📜 Pestaña 5: Normativa y Plan de Convivencia
-- **Asistente Oficial Basado en Evidencia Documental:**
-  - Precarga automática de archivos PDF depositados en la carpeta `documentos_centro/` mediante `pypdf`.
-  - Resumen visual de documentos y páginas indexadas en memoria con `@st.cache_data`.
-  - Posibilidad de subir un documento PDF complementario temporal para consultas específicas.
-  - **Citación Obligatoria de Fuente y Página:** Cada respuesta de la IA referencia explícitamente el nombre del documento y el número de página (`[Nombre.pdf, pág. X]`).
-  - Respuestas taxativas basadas únicamente en la normativa interna (si un procedimiento no consta en el texto, el asistente informa de ello sin conjeturas).
+- **Asistente Oficial Multidocumental Basado en Evidencia:**
+  - **Precarga e Indexación Integral de Documentos Oficiales del Centro:**
+    - `Normas_organizacion_funcionamento.pdf` (**NOF**, 38 páginas): Régimen de ausencias y justificaciones, puntualidad del alumnado y profesorado, funciones docentes y profesorado de guardia, delegados y junta de delegados, huelgas estudiantiles, copias en exámenes, revisiones y reclamación de calificaciones, comunicación telemática con familias, protocolo de accidentes, fondo solidario de libros y normativa de uso de instalaciones (gimnasio Pompeo y condiciones de cesión del Paraninfo).
+    - `Plan Convivencia Xuño 2026.pdf` (**Plan de Convivencia**, 30 páginas): Diagnóstico de convivencia y tipología de conflictos, plan de acogida para nuevos alumnos (1º ESO, inmigrantes), familias y profesorado sustituto, Plan de Acción Tutorial (PAT - programas Convivir, Ser Persoa, Pensar), protocolos rigurosos de prevención, detección e intervención urgente ante acoso escolar y ciberacoso (conforme a la Ley 4/2011 y Decreto 8/2015), tipificación exhaustiva de conductas leves y graves, medidas correctoras reeducadoras (procedimiento conciliado y común), mediación escolar y cuadro competencial sancionador.
+  - **Consultas Individuales y Cruzadas con IA:** El chatbot responde tanto a preguntas específicas sobre un documento concreto como a dudas transversales que contrastan o coordinan ambos textos normativos (por ejemplo, regulación y retirada del móvil en las NOF frente a su tipificación como falta leve en el Plan de Convivencia; gestión de faltas y partes frente a guardias).
+  - **Selector de Ámbito de Consulta:** Permite enfocar la búsqueda en ambos documentos de forma simultánea (opción predeterminada), filtrar exclusivamente por el *Plan de Convivencia (Xuño 2026)* o por las *NOF*, o consultar documentos PDF complementarios subidos de forma temporal.
+  - **Sugerencias Rápidas de Consulta Equilibradas:** 6 accesos directos temáticos sobre acoso escolar, faltas y sanciones, dispositivos móviles, guardias y puntualidad, procedimiento conciliado/mediación, e instalaciones del centro.
+  - **Caché Inteligente y Actualización Automática:** Utiliza `@st.cache_data` con cálculo de firma hash (`_signature`) sobre la carpeta de documentos y botón de recarga forzada (`🔄 Recargar documentos`).
+  - **Citación Obligatoria de Documento y Página:** Cada respuesta incluye citas verificables con el nombre exacto del archivo y la página de procedencia (`[Nombre_Documento.pdf, pág. X]`).
+  - **Garantía Anti-Alucinación:** Si una norma o trámite no consta explícitamente en los documentos cargados, el chatbot responde taxativamente informando de su ausencia sin formular conjeturas.
 
 ---
 
@@ -158,6 +162,8 @@ tutor-mates/
 ├── clase_3eso.csv           # Registro anonimizado de 15 alumnos (perfiles DUA y notas)
 ├── profesores_tutorias.csv  # Horarios y canales de atención a familias de 11 materias
 ├── documentos_centro/       # Carpeta para reglamentos y planes de convivencia (PDF)
+│   ├── Normas_organizacion_funcionamento.pdf  # NOF (38 págs.): régimen interno, guardias e instalaciones
+│   └── Plan Convivencia Xuño 2026.pdf         # Plan Convivencia (30 págs.): acoso, tipificación y sanciones
 └── app.py                   # Aplicación principal de Streamlit con sub-pestañas integradas
 ```
 
