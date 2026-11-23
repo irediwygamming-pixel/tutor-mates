@@ -8,6 +8,7 @@ import os
 import io
 import re
 import json
+import random
 import streamlit as st
 import pandas as pd
 from google import genai
@@ -1619,7 +1620,7 @@ with tab3:
     # -------------------------------------------------------------------------
     with subtab_kahoot:
         st.subheader("🎮 Creador de Cuestionarios Interactivos (Kahoot, Quizizz, Blooket)")
-        st.markdown("Genera preguntas de opción múltiple con **distractores pedagógicos basados en errores típicos** del alumnado de ESO y exportación directa a plantilla CSV oficial.")
+        st.markdown("Genera preguntas de opción múltiple con **distractores pedagógicos basados en errores típicos** del alumnado de ESO, **respuestas correctas aleatorizadas** y exportación directa a plantilla Excel (.xlsx) oficial.")
 
         with st.form("form_kahoot"):
             col_k1, col_k2 = st.columns([2, 1])
@@ -1652,6 +1653,7 @@ with tab3:
                 - 1 OPCIÓN CORRECTA matemáticamente impecable.
                 - 3 DISTRACTORES ESTRATÉGICOS basados en los ERRORES CONCEPTUALES Y OPERATIVOS TÍPICOS del alumnado de secundaria en este contenido concreto (por ejemplo: olvidar cambiar de signo al pasar al otro miembro, sumar denominadores directamente en fracciones, olvidar elevar los signos en potencias, aplicar mal la distributiva con paréntesis precedidos de signo menos, etc.).
                 - NUNCA inventes números al azar para los distractores: cada error debe reflejar un fallo de razonamiento identificable.
+                - DISTRIBUCIÓN ALEATORIA DE LA RESPUESTA CORRECTA: La opción correcta NO debe colocarse siempre en la primera posición. Varía de manera aleatoria y equilibrada la posición de la respuesta correcta entre las posiciones 1, 2, 3 y 4 a lo largo del cuestionario (aproximadamente un 25% de veces en cada una), indicando en el campo "correcta" el número exacto (1, 2, 3 o 4) de la opción verdadera.
 
                 FORMATO DE SALIDA ESTRICTO (JSON):
                 Debes responder ÚNICA Y EXCLUSIVAMENTE con un bloque de código JSON válido (un array de objetos), sin texto introductorio ni explicaciones fuera del JSON.
@@ -1662,115 +1664,155 @@ with tab3:
                     "numero": 1,
                     "pregunta": "¿Cuál es el valor de x en la ecuación 3(x - 2) = 15?",
                     "opciones": [
-                      "x = 7",
                       "x = 3",
+                      "x = 7",
                       "x = 9",
                       "x = 5"
                     ],
-                    "correcta": 1,
+                    "correcta": 2,
                     "tiempo_seg": {tiempo_pregunta},
-                    "analisis_distractores": "Opción 1 es la correcta (3x - 6 = 15 -> 3x = 21 -> x = 7). Opción 2 surge de restar 6 en vez de sumar (15 - 6 = 9 -> 9/3 = 3). Opción 3 surge de olvidar el factor 3 en el paréntesis (x - 6 = 15 o error análogo). Opción 4 surge de dividir 15/3 olvidando el -2."
+                    "analisis_distractores": "Opción 2 es la correcta (3x - 6 = 15 -> 3x = 21 -> x = 7). Opción 1 surge de restar 6 en vez de sumar (15 - 6 = 9 -> 9/3 = 3). Opción 3 surge de olvidar el factor 3 en el paréntesis (x - 6 = 15 o error análogo). Opción 4 surge de dividir 15/3 olvidando el -2."
                   }}
                 ]
                 """
 
                 system_instruction_kahoot = "Eres un especialista en evaluación formativa matemática y diseño de ítems de opción múltiple con análisis de errores en España. Devuelves únicamente JSON estrictamente válido."
                 raw_kahoot_response = call_gemini(prompt_kahoot, system_instruction_kahoot)
+                
+                # Limpiar posible markdown tipo ```json ... ```
+                cleaned_json_text = raw_kahoot_response
+                json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', raw_kahoot_response, re.DOTALL)
+                if json_match:
+                    cleaned_json_text = json_match.group(1)
+                else:
+                    json_match_bracket = re.search(r'(\[.*\])', raw_kahoot_response, re.DOTALL)
+                    if json_match_bracket:
+                        cleaned_json_text = json_match_bracket.group(1)
+
+                preguntas_procesadas = []
+                try:
+                    raw_data = json.loads(cleaned_json_text)
+                    if isinstance(raw_data, list):
+                        for item in raw_data:
+                            ops = item.get("opciones", [])
+                            orig_correcta = item.get("correcta", 1) # 1-based index
+                            if len(ops) >= 2:
+                                # Determinar el índice 0-based de la opción correcta
+                                c_idx = (orig_correcta - 1) if (1 <= orig_correcta <= len(ops)) else 0
+                                # Emparejar cada opción con un booleano que indica si es la correcta
+                                paired = [(opt, idx == c_idx) for idx, opt in enumerate(ops)]
+                                # Barajar aleatoriamente las opciones
+                                random.shuffle(paired)
+                                item["opciones"] = [p[0] for p in paired]
+                                # Calcular el nuevo índice 1-based de la respuesta correcta
+                                item["correcta"] = next(idx + 1 for idx, p in enumerate(paired) if p[1])
+                        preguntas_procesadas = raw_data
+                except Exception:
+                    preguntas_procesadas = []
+
                 st.session_state["ultimo_kahoot_raw"] = raw_kahoot_response
+                st.session_state["ultimo_kahoot_preguntas"] = preguntas_procesadas
                 st.session_state["ultimo_tema_kahoot"] = tema_kahoot
 
-        if st.session_state.get("ultimo_kahoot_raw"):
+        if st.session_state.get("ultimo_kahoot_preguntas"):
             st.markdown("---")
-            raw_text = st.session_state["ultimo_kahoot_raw"]
-            
-            # Limpiar posible markdown tipo ```json ... ```
-            cleaned_json_text = raw_text
-            json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', raw_text, re.DOTALL)
-            if json_match:
-                cleaned_json_text = json_match.group(1)
-            else:
-                json_match_bracket = re.search(r'(\[.*\])', raw_text, re.DOTALL)
-                if json_match_bracket:
-                    cleaned_json_text = json_match_bracket.group(1)
+            preguntas_data = st.session_state["ultimo_kahoot_preguntas"]
+            raw_text = st.session_state.get("ultimo_kahoot_raw", "")
 
-            preguntas_data = []
+            st.markdown(f"### 🎮 Cuestionario Gamificado: {st.session_state.get('ultimo_tema_kahoot', 'Matemáticas')} ({len(preguntas_data)} preguntas)")
+            st.caption("Revisa cada ítem, comprueba la opción correcta (distribuida aleatoriamente) y analiza el fallo conceptual que diagnostica cada distractor.")
+
+            # Renderizar preguntas con expanders visuales
+            for i, item in enumerate(preguntas_data):
+                q_num = item.get("numero", i + 1)
+                q_text = item.get("pregunta", f"Pregunta {i+1}")
+                ops = item.get("opciones", [])
+                correct_idx = item.get("correcta", 1) # 1-based index
+                analisis = item.get("analisis_distractores", "")
+
+                with st.expander(f"❓ Pregunta {q_num}: {q_text}", expanded=(i == 0)):
+                    st.markdown(f"**Enunciado:** {q_text}")
+                    col_o1, col_o2 = st.columns(2)
+                    for o_idx, opcion in enumerate(ops):
+                        is_correct = (o_idx + 1) == correct_idx
+                        col_target = col_o1 if o_idx % 2 == 0 else col_o2
+                        with col_target:
+                            if is_correct:
+                                st.success(f"✅ **Opción {o_idx + 1}:** {opcion} *(Correcta)*")
+                            else:
+                                st.info(f"⚪ **Opción {o_idx + 1}:** {opcion}")
+
+                    if analisis:
+                        st.markdown(f"💡 **Diagnóstico del Error (Guía para el Profesor):**\n*{analisis}*")
+
+            # Preparar DataFrame en formato oficial de hoja de cálculo Kahoot / Quizizz
+            rows_export = []
+            for item in preguntas_data:
+                q = item.get("pregunta", "")
+                ops = item.get("opciones", ["", "", "", ""])
+                while len(ops) < 4:
+                    ops.append("")
+                t = item.get("tiempo_seg", tiempo_pregunta)
+                c = item.get("correcta", 1)
+                rows_export.append({
+                    "Question": q,
+                    "Answer 1": ops[0],
+                    "Answer 2": ops[1],
+                    "Answer 3": ops[2],
+                    "Answer 4": ops[3],
+                    "Time limit (sec)": t,
+                    "Correct answer(s)": c
+                })
+
+            df_kahoot_export = pd.DataFrame(rows_export)
+
+            # Generar archivo Excel (.xlsx) usando openpyxl
+            excel_bytes = None
             try:
-                preguntas_data = json.loads(cleaned_json_text)
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                    df_kahoot_export.to_excel(writer, index=False, sheet_name="Kahoot Template")
+                excel_bytes = excel_buffer.getvalue()
             except Exception as e:
-                # Si falló la conversión JSON, mostrar texto bruto
-                st.warning("Nota: No se pudo parsear el formato estructurado automático, mostrando salida docente en texto:")
-                st.markdown(raw_text)
+                excel_bytes = None
 
-            if preguntas_data and isinstance(preguntas_data, list):
-                st.markdown(f"### 🎮 Cuestionario Gamificado: {st.session_state.get('ultimo_tema_kahoot', 'Matemáticas')} ({len(preguntas_data)} preguntas)")
-                st.caption("Revisa cada ítem, comprueba la opción correcta y analiza el fallo conceptual que diagnostica cada distractor.")
-
-                # Renderizar preguntas con expanders visuales
-                for i, item in enumerate(preguntas_data):
-                    q_num = item.get("numero", i + 1)
-                    q_text = item.get("pregunta", f"Pregunta {i+1}")
-                    ops = item.get("opciones", [])
-                    correct_idx = item.get("correcta", 1) # 1-based index
-                    analisis = item.get("analisis_distractores", "")
-
-                    with st.expander(f"❓ Pregunta {q_num}: {q_text}", expanded=(i == 0)):
-                        st.markdown(f"**Enunciado:** {q_text}")
-                        col_o1, col_o2 = st.columns(2)
-                        for o_idx, opcion in enumerate(ops):
-                            is_correct = (o_idx + 1) == correct_idx
-                            col_target = col_o1 if o_idx % 2 == 0 else col_o2
-                            with col_target:
-                                if is_correct:
-                                    st.success(f"✅ **Opción {o_idx + 1}:** {opcion} *(Correcta)*")
-                                else:
-                                    st.info(f"⚪ **Opción {o_idx + 1}:** {opcion}")
-
-                        if analisis:
-                            st.markdown(f"💡 **Diagnóstico del Error (Guía para el Profesor):**\n*{analisis}*")
-
-                # Preparar DataFrame en formato estándar de Kahoot / Quizizz
-                rows_csv = []
-                for item in preguntas_data:
-                    q = item.get("pregunta", "")
-                    ops = item.get("opciones", ["", "", "", ""])
-                    while len(ops) < 4:
-                        ops.append("")
-                    t = item.get("tiempo_seg", tiempo_pregunta)
-                    c = item.get("correcta", 1)
-                    rows_csv.append({
-                        "Question": q,
-                        "Answer 1": ops[0],
-                        "Answer 2": ops[1],
-                        "Answer 3": ops[2],
-                        "Answer 4": ops[3],
-                        "Time limit (sec)": t,
-                        "Correct answer(s)": c
-                    })
-
-                df_kahoot_export = pd.DataFrame(rows_csv)
-                csv_bytes = df_kahoot_export.to_csv(index=False).encode("utf-8")
-
-                st.markdown("---")
-                col_kdown1, col_kdown2 = st.columns([1, 1])
-                with col_kdown1:
+            st.markdown("---")
+            col_kdown1, col_kdown2 = st.columns([1, 1])
+            with col_kdown1:
+                if excel_bytes:
                     st.download_button(
-                        label="📥 Descargar Plantilla Oficial CSV (Kahoot / Quizizz / Blooket)",
+                        label="📥 Descargar Plantilla Oficial Excel (.xlsx) para Kahoot / Quizizz",
+                        data=excel_bytes,
+                        file_name=f"cuestionario_kahoot_{st.session_state.get('ultimo_tema_kahoot', 'mates').lower().replace(' ', '_')[:25]}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="btn_descarga_xlsx_kahoot"
+                    )
+                else:
+                    # Fallback a CSV si openpyxl no estuviera instalado en algún entorno
+                    csv_bytes = df_kahoot_export.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label="📥 Descargar Plantilla CSV (Alternativa temporal)",
                         data=csv_bytes,
                         file_name=f"cuestionario_kahoot_{st.session_state.get('ultimo_tema_kahoot', 'mates').lower().replace(' ', '_')[:25]}.csv",
                         mime="text/csv",
                         use_container_width=True,
                         key="btn_descarga_csv_kahoot"
                     )
-                with col_kdown2:
-                    st.download_button(
-                        label="📄 Descargar Guion en Texto (.txt)",
-                        data=raw_text,
-                        file_name=f"cuestionario_preguntas_{st.session_state.get('ultimo_tema_kahoot', 'mates').lower().replace(' ', '_')[:25]}.txt",
-                        mime="text/plain",
-                        use_container_width=True,
-                        key="btn_descarga_txt_kahoot"
-                    )
-                st.caption("ℹ️ **Cómo importar en Kahoot / Quizizz:** En Kahoot, ve a 'Crear' > 'Importar desde hoja de cálculo' y sube el archivo `.csv` descargado. Las preguntas, alternativas, tiempo y respuesta correcta se cargarán automáticamente.")
+            with col_kdown2:
+                st.download_button(
+                    label="📄 Descargar Guion en Texto (.txt)",
+                    data=raw_text,
+                    file_name=f"cuestionario_preguntas_{st.session_state.get('ultimo_tema_kahoot', 'mates').lower().replace(' ', '_')[:25]}.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                    key="btn_descarga_txt_kahoot"
+                )
+            st.caption("ℹ️ **Cómo importar en Kahoot / Quizizz:** En Kahoot, ve a 'Crear' > 'Importar desde hoja de cálculo' y sube el archivo `.xlsx` descargado. Las preguntas, opciones barajadas aleatoriamente entre las 4 posiciones, tiempo y respuesta correcta se cargarán automáticamente.")
+        elif st.session_state.get("ultimo_kahoot_raw"):
+            st.markdown("---")
+            st.warning("Nota: Mostrando salida docente en texto bruto:")
+            st.markdown(st.session_state["ultimo_kahoot_raw"])
 
 
 # =============================================================================
